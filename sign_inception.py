@@ -16,19 +16,21 @@ def read_data(gcs_path):
    return data
 
 train_set = read_data('gs://cmb/sign_train.csv')
+train_set = train_set.iloc[:, :].values
 test_set = read_data('gs://cmb/sign_test.csv')
+test_set = test_set.iloc[:, :].values
 
 #get labels in own array
 train_lb=np.array(train_set[0])
 test_lb=np.array(test_set[0])
- 
+
 #one hot encode the labels
 train_lb=(np.arange(26) == train_lb[:,None]).astype(np.float32)
 test_lb=(np.arange(26) == test_lb[:,None]).astype(np.float32)
  
 #drop the labels column from training dataframe
-trainX=train_set.drop(0,axis=1)
-testX=test_set.drop(0,axis=1)
+trainX=train_set[:, 1:]
+testX=test_set[:, 1:]
  
 #put in correct float32 array format
 trainX=np.array(trainX).astype(np.float32)
@@ -38,10 +40,11 @@ testX=np.array(testX).astype(np.float32)
 trainX=trainX.reshape(len(trainX),28,28,1)
 testX = testX.reshape(len(testX),28,28,1)
 
+'''
 #get a validation set and remove it from the train set
 trainX,valX,train_lb,val_lb=trainX[0:(len(trainX)-500),:,:,:],trainX[(len(trainX)-500):len(trainX),:,:,:],\
                             train_lb[0:(len(trainX)-500),:],train_lb[(len(trainX)-500):len(trainX),:]
-
+'''
 #need to batch the test data because running low on memory
 class test_batchs:
     def __init__(self,data):
@@ -65,7 +68,7 @@ batch_size = 50
 map1 = 32
 map2 = 64
 num_fc1 = 700 #1028
-num_fc2 = 10
+num_fc2 = 26
 reduce1x1 = 16
 dropout=0.5
 
@@ -76,7 +79,7 @@ with graph.as_default():
     y_ = tf.placeholder(tf.float32,shape=(batch_size,26))
  
     #validation data
-    tf_valX = tf.placeholder(tf.float32,shape=(len(valX),28,28,1))
+    # tf_valX = tf.placeholder(tf.float32,shape=(len(valX),28,28,1))
  
     #test data
     tf_testX=tf.placeholder(tf.float32,shape=(test_batch_size,28,28,1))
@@ -196,7 +199,7 @@ with graph.as_default():
         tf.nn.softmax_cross_entropy_with_logits(logits = model(X),labels = y_))
     opt = tf.train.AdamOptimizer(1e-4).minimize(loss)
  
-    predictions_val = tf.nn.softmax(model(tf_valX,train=False))
+    # predictions_val = tf.nn.softmax(model(tf_valX,train=False))
     predictions_test = tf.nn.softmax(model(tf_testX,train=False))
  
     #initialize variable
@@ -221,12 +224,24 @@ if use_previous:
     saver.restore(sess,'gs://cmb/mnist/sign.ckpt')
     print("Model restored.")
  
+def next_batch(batch_size, data, labels):
+    idx = np.arange(0, len(data))
+    np.random.shuffle(idx)
+    idx = idx[: batch_size]
+    data_shuffle = [data[i] for i in idx]
+    labels_shuffle = [labels[i] for i in idx]
+    return np.asarray(data_shuffle), np.asarray(labels_shuffle)
+
 #training
 for s in range(num_steps):
+    '''
     offset = (s*batch_size) % (len(trainX)-batch_size)
     batch_x,batch_y = trainX[offset:(offset+batch_size),:],train_lb[offset:(offset+batch_size),:]
+    '''
+    batch_x, batch_y = next_batch(batch_size, trainX, train_lb)
     feed_dict={X : batch_x, y_ : batch_y}
     _,loss_value = sess.run([opt,loss],feed_dict=feed_dict)
+    '''
     if s%100 == 0:
         feed_dict = {tf_valX : valX}
         preds=sess.run(predictions_val,feed_dict=feed_dict)
@@ -234,7 +249,7 @@ for s in range(num_steps):
         print "step: "+str(s)
         print "validation accuracy: "+str(accuracy(val_lb,preds))
         print " "
- 
+    '''
     #get test accuracy and save model
     if s == (num_steps-1):
         #create an array to store the outputs for the test
@@ -249,6 +264,7 @@ for s in range(num_steps):
             result=np.concatenate((result,preds),axis=0)
  
         print "test accuracy: "+str(accuracy(test_lb,result))
- 
+        
         save_path = saver.save(sess,'gs://cmb/mnist/sign.ckpt')
         print("Model saved.")
+        
